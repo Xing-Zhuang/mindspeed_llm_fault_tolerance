@@ -2,6 +2,7 @@
 import sys
 import time
 from abc import ABC, abstractmethod
+from typing import Any
 import torch
 import megatron
 from megatron.training import get_args, print_rank_0, get_timers
@@ -52,10 +53,15 @@ class BaseTrainer(ABC):
         self.model_type = None
         self.test_data_iterator_list = None
         self.train_valid_test_datasets_provider = train_valid_test_datasets_provider
+        
+        #print(f"++++++++++++before initialize++++++++++++++",flush=True)
         self.initialize()
+        #print(f"++++++++++++after initialize++++++++++++++",flush=True)
+        #print(f"{self.train_args}") 
         
     
     def initialize(self):
+        
         """Sets up necessary configurations and logging."""
         self.train_valid_test_datasets_provider.is_distributed = True
         self.log_initialization()
@@ -86,9 +92,13 @@ class BaseTrainer(ABC):
 
     def synchronize_start_time(self):
         """Synchronize training start time across all distributed processes."""
+        import os
         global _TRAIN_START_TIME
         start_time_tensor = torch.tensor([_TRAIN_START_TIME], dtype=torch.float, device='cuda')
+        #print(f"==============={os.environ['RANK']},current_device={torch.cuda.current_device()},before synchronize_start_time============================",flush=True)
+        #print(start_time_tensor.dtype)
         torch.distributed.all_reduce(start_time_tensor, op=torch.distributed.ReduceOp.MIN)
+        #print(f"==============={os.environ['RANK']},current_device={torch.cuda.current_device()},after synchronize_start_time============================",flush=True)
         _TRAIN_START_TIME = start_time_tensor.item()
 
     def model_provider(self, pre_process, post_process):
@@ -184,8 +194,10 @@ class BaseTrainer(ABC):
         raise NotImplementedError("Subclasses must implement this method.")
 
     def train(self):
-        args = get_args()
+        #print('=============开始执行train()函数 mindspeed_llm/tasks/posttrain/base/base_trainer.py================',flush=True)
+        args: Any | None = get_args()
         test_data_iterator = self.test_data_iterator_list[0]
+
         forward_step_func, model, optimizer, opt_param_scheduler, train_data_iterator, valid_data_iterator, process_non_loss_data_func, config = self.train_args
         
         if not args.skip_train:

@@ -74,6 +74,7 @@ def model_provider(pre_process=True, post_process=True) -> Union[GPTModel, megat
         if args.mtp_num_layers is not None:
             mtp_block_spec = get_gpt_mtp_block_spec(config, transformer_layer_spec, use_transformer_engine=use_te)
 
+        
         model = GPTModel(
             config=config,
             transformer_layer_spec=transformer_layer_spec,

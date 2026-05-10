@@ -22,6 +22,7 @@ def get_trainer(stage):
             return LDTSFTTrainer()
         else:
             return SFTTrainer()
+            
     elif stage == "dpo":
         return DPOTrainer()
     else:
@@ -44,9 +45,12 @@ class AutoTrainer:
         - Retrieves the 'stage' argument.
         - Uses the 'stage' to select the correct trainer.
         """
-        initialize_megatron()
+        initialize_megatron() #初始化通信组
+        #print(f"==============after initialize_megatron====================",flush=True)
         self.args = get_args()
-        self.trainer = get_trainer(self.args.stage)
+        #print(f"==============after get_args====================",flush=True)
+        self.trainer = get_trainer(self.args.stage) #获取训练器（模型初始化也在这里面）
+        #print(f"==============after get_trainer====================",flush=True)
 
     def train(self):
         """

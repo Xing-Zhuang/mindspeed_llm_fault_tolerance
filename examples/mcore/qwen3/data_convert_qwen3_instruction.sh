@@ -3,8 +3,8 @@ source /usr/local/Ascend/ascend-toolkit/set_env.sh
 mkdir ./finetune_dataset
 
 python ./preprocess_data.py \
-    --input ./dataset/train-00000-of-00001-a09b74b3ef9c3b56.parquet \
-    --tokenizer-name-or-path ./model_from_hf/qwen3_hf/ \
+    --input /home/user2/workplace/dataset/tatsu-lab/train-00000-of-00001-a09b74b3ef9c3b56.parquet \
+    --tokenizer-name-or-path /home/user2/workplace/model_weight/model_from_hf/Qwen3-8B/ \
     --output-prefix ./finetune_dataset/alpaca \
     --handler-name AlpacaStyleInstructionHandler \
     --tokenizer-type PretrainedFromHF \
