@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # export ASCEND_SLOG_PRINT_TO_STDOUT=1
-# export ASCEND_GLOBAL_LOG_LEVEL=1
+# export ASCEND_GLOBAL_LOG_LEVEL=3
+# export TORCH_DIST_INIT_BARRIER=1
 
 #export TORCH_DISABLE_SHARE_RDZV_TCP_STORE=1
 #export TORCH_DIST_INIT_BARRIER=1
@@ -11,7 +12,12 @@
 #export CUDA_VISIBLE_DEVICES=0,2,4,7
 #export ASCEND_RT_VISIBLE_DEVICES=0,2,4,7
 
-# export FAULT_TOLERANCE=True
+export FAULT_TOLERANCE=True
+export REDIS_URL="redis://127.0.0.1:6379"
+export TCP_STORE_HOST="127.0.0.1"
+export TCP_STORE_PORT="29599"
+# export HCCL_CONNECT_TIMEOUT=120
+# export HCCL_ASYNC_ERROR_HANDLING=2
 # export ALLOW_TP_SIZE=1,2,4,8
 # export TP8_CKPT_LOAD_DIR="/home/user2/workplace/model_weight/model_mcore/Qwen3-8B-tp8-pp1"
 # export TP4_CKPT_LOAD_DIR="/home/user2/workplace/model_weight/model_mcore/Qwen3-8B-tp4-pp1"

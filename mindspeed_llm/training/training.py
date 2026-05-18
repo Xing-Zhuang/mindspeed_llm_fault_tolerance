@@ -336,10 +336,13 @@ def get_profiler():
 
 def build_train_args(*input_args):
     args, timers, train_valid_test_dataset_provider, model_provider, model_type, forward_step_func, process_non_loss_data_func, app_metrics = input_args
-
+ 
     from megatron.training.training import setup_model_and_optimizer
     # Model, optimizer, and learning rate.
-    timers('model-and-optimizer-setup', log_level=0).start(barrier=True)
+    if os.getenv('FAULT_TOLERANCE', 'false').lower() == 'true' and os.getenv('RESTART', 'false').lower() == 'true':
+        timers('model-and-optimizer-setup', log_level=0).start(barrier=False)
+    else:
+        timers('model-and-optimizer-setup', log_level=0).start(barrier=True)
     app_metrics['app_build_optimizer_start_time'] = one_logger_utils.get_timestamp_in_ms()
 
     if args.lu_lora_final_layer_index is not None:
@@ -360,15 +363,21 @@ def build_train_args(*input_args):
         model, optimizer, opt_param_scheduler = setup_model_and_optimizer(
             model_provider_func, model_type)
     timers('model-and-optimizer-setup').stop()
-    print_datetime('after model, optimizer, and learning rate '
-                   'scheduler are built')
+    if os.getenv('FAULT_TOLERANCE', 'false').lower() == 'true' and os.getenv('RESTART', 'false').lower() == 'true':
+        pass
+    else:
+        print_datetime('after model, optimizer, and learning rate '
+                       'scheduler are built')
     app_metrics['app_build_optimizer_finish_time'] = one_logger_utils.get_timestamp_in_ms()
     config = get_model_config(model[0])
 
     # Data stuff.
     app_metrics['app_build_dataiters_start_time'] = one_logger_utils.get_timestamp_in_ms()
-    timers('train/valid/test-data-iterators-setup', log_level=0).start(
-        barrier=True)
+    if os.getenv('FAULT_TOLERANCE', 'false').lower() == 'true' and os.getenv('RESTART', 'false').lower() == 'true':
+        timers('train/valid/test-data-iterators-setup', log_level=0).start(barrier=False)
+    else:
+        timers('train/valid/test-data-iterators-setup', log_level=0).start(barrier=True)
+    
     if args.virtual_pipeline_model_parallel_size is not None:
         train_data_iterator = []
         valid_data_iterator = []
@@ -391,13 +400,18 @@ def build_train_args(*input_args):
             valid_data_iterator.append(iterators[1])
             test_data_iterator.append(iterators[2])
     else:
+        print(f"rank {os.environ['RANK']} 构建训练数据迭代器 args.iteration:{args.iteration}")
         train_data_iterator, valid_data_iterator, test_data_iterator \
             = build_train_valid_test_data_iterators(
                 train_valid_test_dataset_provider)
-    timers('train/valid/test-data-iterators-setup').stop()
-    print_datetime('after dataloaders are built')
-    app_metrics['app_build_dataiters_finish_time'] = one_logger_utils.get_timestamp_in_ms()
+        print(f"rank {os.environ['RANK']} 构建训练数据迭代器完成")
 
+    timers('train/valid/test-data-iterators-setup').stop()
+    if os.getenv('FAULT_TOLERANCE', 'false').lower() == 'true' and os.getenv('RESTART', 'false').lower() == 'true':
+        pass
+    else:
+        print_datetime('after dataloaders are built')
+    app_metrics['app_build_dataiters_finish_time'] = one_logger_utils.get_timestamp_in_ms()
     # Track if training is enabled. Can only be done once args.do_train is assigned after dataloader is built.
     one_logger_utils.track_config_flags(args.train_iters, args.skip_train, args.do_train,
                                         args.do_valid, args.do_test, args.dataloader_type,
@@ -405,8 +419,11 @@ def build_train_args(*input_args):
 
     # Print setup timing.
     print_rank_0('done with setup ...')
-    timers.log(['model-and-optimizer-setup',
-                'train/valid/test-data-iterators-setup'], barrier=True)
+    if os.getenv('FAULT_TOLERANCE', 'false').lower() == 'true' and os.getenv('RESTART', 'false').lower() == 'true':
+        pass
+    else:
+        timers.log(['model-and-optimizer-setup',
+                    'train/valid/test-data-iterators-setup'], barrier=True)
 
     train_args = [forward_step_func,
                   model, optimizer, opt_param_scheduler,
@@ -605,7 +622,6 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
                                     train_iters=args.train_iters, save=args.save, async_save=args.async_save,
                                     log_throughput=args.log_throughput,
                                     num_floating_point_operations_so_far=args.num_floating_point_operations_so_far)
-
     num_floating_point_operations_so_far = 0
 
     # Setup some training config params
@@ -630,11 +646,15 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
             config.param_sync_func = config.param_sync_func[0]
     config.finalize_model_grads_func = finalize_model_grads
 
-    timers('interval-time', log_level=0).start(barrier=True)
-    print_datetime('before the start of training step')
+    if os.getenv('FAULT_TOLERANCE', 'false').lower() == 'true' and os.getenv('RESTART', 'false').lower() == 'true':
+        timers('interval-time', log_level=0).start(barrier=False)
+    else:
+        timers('interval-time', log_level=0).start(barrier=True)
+        print_datetime('before the start of training step')
     report_memory_flag = True
     pre_hook_enabled = False
     exit = False
+
 
     if args.manual_gc:
         # Disable the default garbage collector and perform the collection manually.
@@ -648,6 +668,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
     num_microbatches = get_num_microbatches()
     eval_duration = 0.0
     eval_iterations = 0
+
 
     def get_e2e_base_metrics():
         """Get base metrics values for one-logger to calculate E2E tracking metrics.
@@ -684,6 +705,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         config.param_sync_func = None
         pre_hook_enabled = False
 
+
     while iteration < args.train_iters:
         maybe_finalize_async_save(blocking=False)
 
@@ -705,15 +727,50 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         num_microbatches = get_num_microbatches()
         update_num_microbatches(args.consumed_train_samples, consistency_check=True)
 
-        args.curr_iteration = iteration
-        loss_dict, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad = \
-            train_step(forward_step_func,
-                       train_data_iterator,
-                       model,
-                       optimizer,
-                       opt_param_scheduler,
-                       config)
+        
+        if os.getenv('FAULT_TOLERANCE', 'false').lower() == 'true':
+            import fault_tolerance.state_manager as sm
+            from mindspeed_llm.tasks.posttrain.utils import train_valid_test_datasets_provider
+
+            args.curr_iteration = iteration
+            loss_dict, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad, model = \
+                train_step(forward_step_func,
+                        train_data_iterator,
+                        model,
+                        optimizer,
+                        opt_param_scheduler,
+                        config)
+                    
+            
+            if sm.RERUN:
+                print(f"rank {os.environ['RANK']} 构建训练数据迭代器 args.iteration:{args.iteration}")
+                train_data_iterator, valid_data_iterator, test_data_iterator \
+                    = build_train_valid_test_data_iterators(train_valid_test_datasets_provider)
+                
+                args.curr_iteration = args.iteration
+                loss_dict, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad, model = \
+                    train_step(forward_step_func,
+                            train_data_iterator,
+                            model,
+                            optimizer,
+                            opt_param_scheduler,
+                            config)
+               
+                sm.RERUN = False #复位
+                    
+        else:
+            args.curr_iteration = iteration
+            loss_dict, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad = \
+                train_step(forward_step_func,
+                        train_data_iterator,
+                        model,
+                        optimizer,
+                        opt_param_scheduler,
+                        config)
+
+ 
         _enable_npu_datadump_step_end()
+        
         
         # Enable forward pre-hooks after first set of forward and backward passes.
         # When running in fp16, skip all NaN iterations until steady-state loss scaling value
@@ -732,7 +789,8 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
                     enable_forward_pre_hook(model)
                     config.param_sync_func = param_sync_func
                     pre_hook_enabled = True
-                    
+
+
         iteration += 1
         batch_size = mpu.get_data_parallel_world_size() * \
                      args.micro_batch_size * \
@@ -741,6 +799,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         num_fp_ops = num_floating_point_operations(args, batch_size)
         num_floating_point_operations_so_far += num_fp_ops
         total_flops += num_fp_ops
+         
 
         # Logging.
         loss_scale = optimizer.get_loss_scale().item()
@@ -755,12 +814,15 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
                 decoupled_learning_rate = param_group['lr']
             else:
                 learning_rate = param_group['lr']
+        
+    
         report_memory_flag = training_log(loss_dict, total_loss_dict,
-                                          learning_rate,
-                                          decoupled_learning_rate,
-                                          iteration, loss_scale,
-                                          report_memory_flag, skipped_iter,
-                                          grad_norm, params_norm, num_zeros_in_grad)
+                                        learning_rate,
+                                        decoupled_learning_rate,
+                                        iteration, loss_scale,
+                                        report_memory_flag, skipped_iter,
+                                        grad_norm, params_norm, num_zeros_in_grad)
+        
 
         if args.enable_high_availability:
             args.num_floating_point_operations_so_far = num_floating_point_operations_so_far
@@ -771,6 +833,8 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
                 (iteration % args.adlr_autoresume_interval == 0):
             check_adlr_autoresume_termination(iteration, model, optimizer,
                                               opt_param_scheduler)
+
+        
 
         # Evaluation
         if args.eval_interval and iteration % args.eval_interval == 0 and \
@@ -815,7 +879,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
                 print_datetime('exiting program after receiving SIGTERM.')
                 exit = True
                 break
-
+                
         if args.save and args.save_interval and \
                 iteration % args.save_interval == 0:
             save_checkpoint_and_time(iteration, model, optimizer,
@@ -854,7 +918,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
                 print_datetime('exiting program after {} minutes'.format(train_time))
                 exit = True
                 break
-
+        
         # Exiting based on iterations
         if args.exit_interval and iteration % args.exit_interval == 0:
             if args.save and not saved_checkpoint:
@@ -880,6 +944,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
             from mindio_ttp.framework_ttp import tft_pause_train
             tft_pause_train(iteration)
 
+        
     if is_profile_enabled():
         prof.stop()
 

@@ -26,7 +26,7 @@ from mindspeed_llm.training.training import build_train_args
 from mindspeed_llm.training.training import train
 from mindspeed_llm.training.initialize import set_jit_fusion_options
 from mindspeed_llm.tasks.posttrain.utils import train_valid_test_datasets_provider
-
+import os
 
 _TRAIN_START_TIME = time.time()
 
@@ -54,20 +54,22 @@ class BaseTrainer(ABC):
         self.test_data_iterator_list = None
         self.train_valid_test_datasets_provider = train_valid_test_datasets_provider
         
-        #print(f"++++++++++++before initialize++++++++++++++",flush=True)
+        #print(f"++++++++++++before initialize++++++++++++++",flush=True)        
         self.initialize()
         #print(f"++++++++++++after initialize++++++++++++++",flush=True)
         #print(f"{self.train_args}") 
         
     
     def initialize(self):
-        
         """Sets up necessary configurations and logging."""
         self.train_valid_test_datasets_provider.is_distributed = True
         self.log_initialization()
 
         set_jit_fusion_options()
-        self.synchronize_start_time()
+        if os.getenv('FAULT_TOLERANCE', 'false').lower() == 'true' and os.getenv('RESTART', 'false').lower() == 'true':
+            pass
+        else:
+            self.synchronize_start_time()
         print_rank_0('time to initialize megatron (seconds): {:.3f}'.format(time.time() - _TRAIN_START_TIME))
 
         app_metrics = {}

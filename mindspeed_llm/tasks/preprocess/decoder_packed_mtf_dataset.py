@@ -137,6 +137,8 @@ class DecoderPackedMTFDataset(torch.utils.data.Dataset):
         self.pad_token = pad_token
         self.seq_length = seq_length
         self.eos_token = eos_token
+        # if os.getenv('RESTART', 'false').lower() == 'true' or os.getenv('FAKE_RESTART', 'false').lower() == 'true':
+        #     print(f"rank:{os.environ['RANK']} name:{name}, data_prefix:{data_prefix}, documents:{documents}, num_samples:{num_samples}, seq_length:{seq_length}, pad_token:{pad_token}, eos_token:{eos_token}, seed:{seed}")
         self.shuffle_index = _build_index_mappings(name=name,
                                                    data_prefix=data_prefix,
                                                    start_index=documents[0],
@@ -168,6 +170,8 @@ class DecoderPackedMTFDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         doc_idx = self.shuffle_index[idx]
+        # if os.getenv('RESTART', 'false').lower() == 'true' or os.getenv('FAKE_RESTART', 'false').lower() == 'true':
+        #     print(f"__getitem__: rank:{os.environ['RANK']} doc_idx:{doc_idx}")
 
         # Consistent with pre-training
         if self.args.return_document_ids and mpu.get_tensor_model_parallel_rank() == 0 and mpu.get_pipeline_model_parallel_rank() == 0 and mpu.get_context_parallel_rank() == 0:
@@ -419,7 +423,6 @@ def _build_index_mappings(
     - `shuffle_index` is [num_epoch * len(self.mtf)]
     - `sample_index` is [num_sample, 2] (storing the start and end of the sample). We query the sample via `self.shuffle_index[start:end]`
     """
-
     # rng state
     np_rng = np.random.RandomState(seed=seed)
 
@@ -463,7 +466,7 @@ def _build_index_mappings(
 
     # This should be a barrier but nccl barrier assumes
     # device_index=rank which is not the case for model
-    # parallel case
+    # parallel case 
     torch.distributed.barrier()
     counts = torch.cuda.LongTensor([1])
     torch.distributed.all_reduce(counts, group=parallel_state.get_data_parallel_group())
