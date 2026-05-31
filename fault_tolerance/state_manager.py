@@ -164,10 +164,17 @@ class StateManager:
         if gpt_model.pre_process or gpt_model.post_process:
             if parallel_state.is_rank_in_embedding_group():
                 weight = gpt_model.shared_embedding_or_output_weight()
-                weight.data = weight.data.cuda()
-                torch.distributed.all_reduce(
-                    weight.data, group=parallel_state.get_embedding_group()
-                )
+                if os.getenv("ENABLE_GLOO", "false").lower() == "true":
+                    weight_data_cpu = weight.data.to('cpu')
+                    torch.distributed.all_reduce(
+                        weight_data_cpu, group=parallel_state.get_embedding_group()
+                    )
+                    weight.data = weight_data_cpu.to('cuda')
+                else:
+                    weight.data = weight.data.cuda()
+                    torch.distributed.all_reduce(
+                        weight.data, group=parallel_state.get_embedding_group()
+                    )
         
         #4.发送训练状态
         dst_rank = self.get_dst_rank()

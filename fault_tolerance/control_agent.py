@@ -106,7 +106,7 @@ class ControlAgent:
             #选择冗余rank和重启的npu
             redundant_rank_id = 2
             relaunch_node_id = 0
-            relaunch_npu_id = 0
+            relaunch_npu_id = 1
             self.redis_client.set(f"redundant_rank_id", redundant_rank_id)
             self.redis_client.set(f"relaunch_node_id", relaunch_node_id)
             self.redis_client.set(f"relaunch_npu_id", relaunch_npu_id)

@@ -111,8 +111,15 @@ def _allreduce_word_embedding_grads(model: List[torch.nn.Module], config: Transf
                 adjust_fn = getattr(quant_finalize, "_maybe_adjust_quant_scale", None)
                 if adjust_fn is not None:
                     adjust_fn(grad, parallel_state.get_embedding_group())
-
-            torch.distributed.all_reduce(grad, group=parallel_state.get_embedding_group())
+            
+            import os
+            if os.getenv("ENABLE_GLOO", "false").lower() == "true":
+                device = grad.device
+                grad_cpu = grad.to("cpu")
+                torch.distributed.all_reduce(grad_cpu, group=parallel_state.get_embedding_group())
+                grad.copy_(grad_cpu.to(device))
+            else:
+                torch.distributed.all_reduce(grad, group=parallel_state.get_embedding_group())
             setattr(weight, grad_attr, _reshard_if_dtensor(grad, orig_grad))
 
 

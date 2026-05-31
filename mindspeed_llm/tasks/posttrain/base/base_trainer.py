@@ -94,12 +94,16 @@ class BaseTrainer(ABC):
 
     def synchronize_start_time(self):
         """Synchronize training start time across all distributed processes."""
-        import os
+        #import os
         global _TRAIN_START_TIME
         start_time_tensor = torch.tensor([_TRAIN_START_TIME], dtype=torch.float, device='cuda')
         #print(f"==============={os.environ['RANK']},current_device={torch.cuda.current_device()},before synchronize_start_time============================",flush=True)
         #print(start_time_tensor.dtype)
-        torch.distributed.all_reduce(start_time_tensor, op=torch.distributed.ReduceOp.MIN)
+        if os.getenv("ENABLE_GLOO", "false").lower() == "true":
+            start_time_tensor = start_time_tensor.to('cpu')
+            torch.distributed.all_reduce(start_time_tensor, op=torch.distributed.ReduceOp.MIN)
+        else:
+            torch.distributed.all_reduce(start_time_tensor, op=torch.distributed.ReduceOp.MIN)
         #print(f"==============={os.environ['RANK']},current_device={torch.cuda.current_device()},after synchronize_start_time============================",flush=True)
         _TRAIN_START_TIME = start_time_tensor.item()
 

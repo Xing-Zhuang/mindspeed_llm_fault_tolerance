@@ -468,12 +468,23 @@ def _build_index_mappings(
     # device_index=rank which is not the case for model
     # parallel case 
     torch.distributed.barrier()
-    counts = torch.cuda.LongTensor([1])
-    torch.distributed.all_reduce(counts, group=parallel_state.get_data_parallel_group())
-    torch.distributed.all_reduce(counts, group=parallel_state.get_pipeline_model_parallel_group())
-    torch.distributed.all_reduce(counts, group=parallel_state.get_context_parallel_group())
-    item = (torch.distributed.get_world_size() //
-            torch.distributed.get_world_size(group=parallel_state.get_tensor_model_parallel_group()))
+    
+    if os.getenv("ENABLE_GLOO", "false").lower() == "true":
+        counts = torch.cuda.LongTensor([1])
+        counts = counts.to('cpu')
+        torch.distributed.all_reduce(counts, group=parallel_state.get_data_parallel_group())
+        torch.distributed.all_reduce(counts, group=parallel_state.get_pipeline_model_parallel_group())
+        torch.distributed.all_reduce(counts, group=parallel_state.get_context_parallel_group())
+        item = (torch.distributed.get_world_size() //
+                torch.distributed.get_world_size(group=parallel_state.get_tensor_model_parallel_group()))
+    else:
+        counts = torch.cuda.LongTensor([1])
+        torch.distributed.all_reduce(counts, group=parallel_state.get_data_parallel_group())
+        torch.distributed.all_reduce(counts, group=parallel_state.get_pipeline_model_parallel_group())
+        torch.distributed.all_reduce(counts, group=parallel_state.get_context_parallel_group())
+        item = (torch.distributed.get_world_size() //
+                torch.distributed.get_world_size(group=parallel_state.get_tensor_model_parallel_group()))
+    
     check_equal(counts[0].item(), item)
 
     # Load mappings.

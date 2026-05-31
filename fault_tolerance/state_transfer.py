@@ -34,23 +34,51 @@ class ModelWeightTransfer:
                 yield name, b
 
     def send(self,dst):
-        for name, tensor in self._iter_model_tensors():
-            t = tensor.detach()
+        if os.getenv("ENABLE_GLOO", "false").lower() == "true":
+            for name, tensor in self._iter_model_tensors():
+                t = tensor.detach()
 
-            # 非 contiguous tensor 建议先 contiguous
-            send_buf = t.contiguous()
-            dist.send(send_buf, dst=dst)
+                # Gloo 走 CPU tensor
+                send_buf = t.contiguous().to(device="cpu")
+
+                dist.send(send_buf, dst=dst)
+        else:
+            for name, tensor in self._iter_model_tensors():
+                t = tensor.detach()
+
+                # 非 contiguous tensor 建议先 contiguous
+                send_buf = t.contiguous()
+                dist.send(send_buf, dst=dst)
 
 
     def recv(self,src):
-        for name, tensor in self._iter_model_tensors():
-            # 如果目标 tensor 本身 contiguous，可直接 recv 到 tensor.data
-            if tensor.is_contiguous():
-                dist.recv(tensor, src=src)
-            else:
-                tmp = torch.empty_like(tensor, memory_format=torch.contiguous_format)
-                dist.recv(tmp, src=src)
-                tensor.copy_(tmp)
+        if os.getenv("ENABLE_GLOO", "false").lower() == "true":
+            for name, tensor in self._iter_model_tensors():
+                # Gloo 只能稳定地通信 CPU tensor
+                recv_buf = torch.empty(
+                    tensor.shape,
+                    dtype=tensor.dtype,
+                    device="cpu",
+                )
+
+                dist.recv(recv_buf, src=src)
+
+                # 拷回原 tensor 所在设备，比如 cuda
+                with torch.no_grad():
+                    if tensor.is_contiguous():
+                        tensor.copy_(recv_buf.to(device=tensor.device, non_blocking=True))
+                    else:
+                        tmp = recv_buf.to(device=tensor.device, non_blocking=True)
+                        tensor.copy_(tmp)
+        else:
+            for name, tensor in self._iter_model_tensors():
+                # 如果目标 tensor 本身 contiguous，可直接 recv 到 tensor.data
+                if tensor.is_contiguous():
+                    dist.recv(tensor, src=src)
+                else:
+                    tmp = torch.empty_like(tensor, memory_format=torch.contiguous_format)
+                    dist.recv(tmp, src=src)
+                    tensor.copy_(tmp)
 
 class OptimizerTransfer:
     """
@@ -78,7 +106,6 @@ class OptimizerTransfer:
         self.optimizer = optimizer
         self.device = self._get_current_npu_device()
 
-        self._assert_hccl_backend()
         self._assert_chained_adam_optimizer()
 
     def send(self, dst: int) -> Dict[str, Any]:
@@ -183,13 +210,6 @@ class OptimizerTransfer:
             "num_chained_optimizers": remote_num,
             "num_tensors": len(recv_buffers),
         }
-
-    def _assert_hccl_backend(self) -> None:
-        backend = str(dist.get_backend()).lower()
-        if "hccl" not in backend:
-            raise RuntimeError(
-                f"OptimizerTransfer is NPU/HCCL-only, but current backend is {backend!r}."
-            )
 
     def _get_current_npu_device(self) -> torch.device:
         if not hasattr(torch, "npu"):
@@ -362,14 +382,22 @@ class OptimizerTransfer:
         num_bytes = len(payload)
 
         length = torch.tensor([num_bytes], dtype=torch.long, device=self.device)
-        dist.send(length, dst=dst)
+        if os.getenv("ENABLE_GLOO", "false").lower() == "true":
+            length_cpu = length.to('cpu')
+            dist.send(length_cpu, dst=dst)
+        else:
+            dist.send(length, dst=dst)
 
         if num_bytes == 0:
             return
 
         cpu_payload = self._bytes_to_cpu_uint8_tensor(payload)
         npu_payload = cpu_payload.to(self.device)
-        dist.send(npu_payload, dst=dst)
+        if os.getenv("ENABLE_GLOO", "false").lower() == "true":
+            npu_payload_cpu = npu_payload.to('cpu')
+            dist.send(npu_payload_cpu, dst=dst)
+        else:
+            dist.send(npu_payload, dst=dst)
 
     def _recv_python_obj(self, src: int) -> Any:
         """
@@ -378,7 +406,12 @@ class OptimizerTransfer:
         先收长度，再按长度收 bytes tensor，最后 pickle.loads 还原结构。
         """
         length = torch.empty((1,), dtype=torch.long, device=self.device)
-        dist.recv(length, src=src)
+        if os.getenv("ENABLE_GLOO", "false").lower() == "true":
+            length_cpu = torch.empty((1,), dtype=torch.long, device='cpu')
+            dist.recv(length_cpu, src=src)
+            length.copy_(length_cpu)
+        else:
+            dist.recv(length, src=src)
 
         num_bytes = int(length.cpu().item())
 
@@ -389,7 +422,12 @@ class OptimizerTransfer:
             return None
 
         npu_payload = torch.empty((num_bytes,), dtype=torch.uint8, device=self.device)
-        dist.recv(npu_payload, src=src)
+        if os.getenv("ENABLE_GLOO", "false").lower() == "true":
+            npu_payload_cpu = torch.empty((num_bytes,), dtype=torch.uint8, device='cpu')
+            dist.recv(npu_payload_cpu, src=src)
+            npu_payload.copy_(npu_payload_cpu)
+        else:
+            dist.recv(npu_payload, src=src)
 
         payload = npu_payload.cpu().numpy().tobytes()
         return pickle.loads(payload)
@@ -410,8 +448,12 @@ class OptimizerTransfer:
 
         if send_buf.device != self.device:
             send_buf = send_buf.to(self.device)
-
-        dist.send(send_buf, dst=dst)
+        
+        if os.getenv("ENABLE_GLOO", "false").lower() == "true":
+            send_buf_cpu = send_buf.to('cpu')
+            dist.send(send_buf_cpu, dst=dst)
+        else:
+            dist.send(send_buf, dst=dst)
 
     @staticmethod
     def _recv_tensor(buf: torch.Tensor, src: int) -> None:
@@ -424,7 +466,12 @@ class OptimizerTransfer:
         if buf.numel() == 0:
             return
 
-        dist.recv(buf, src=src)
+        if os.getenv("ENABLE_GLOO", "false").lower() == "true":
+            buf_cpu = buf.to('cpu')
+            dist.recv(buf_cpu, src=src)
+            buf.copy_(buf_cpu)
+        else:
+            dist.recv(buf, src=src)
 
     @staticmethod
     def _bytes_to_cpu_uint8_tensor(payload: bytes) -> torch.Tensor:
@@ -490,7 +537,6 @@ class OptimizerParamSchedulerTransfer:
 
         self._send_obj(state_dict, dst)
      
-
     def recv(self, src: int) -> Dict[str, Any]:
         """
         接收端调用。
@@ -535,7 +581,11 @@ class OptimizerParamSchedulerTransfer:
         num_bytes = len(payload)
 
         length_tensor = torch.tensor([num_bytes], dtype=torch.long, device=self.device)
-        dist.send(length_tensor, dst=dst)
+        if os.getenv("ENABLE_GLOO", "false").lower() == "true":
+            length_tensor_cpu = length_tensor.to('cpu')
+            dist.send(length_tensor_cpu, dst=dst)
+        else:
+            dist.send(length_tensor, dst=dst)
 
         if num_bytes == 0:
             return
@@ -543,14 +593,23 @@ class OptimizerParamSchedulerTransfer:
         payload_tensor = torch.frombuffer(bytearray(payload), dtype=torch.uint8)
         payload_tensor = payload_tensor.to(self.device)
 
-        dist.send(payload_tensor, dst=dst)
+        if os.getenv("ENABLE_GLOO", "false").lower() == "true":
+            payload_tensor_cpu = payload_tensor.to('cpu')
+            dist.send(payload_tensor_cpu, dst=dst)
+        else:
+            dist.send(payload_tensor, dst=dst)
 
     def _recv_obj(self, src: int) -> Any:
         """
         接收 _send_obj 发来的 Python 对象。
         """
         length_tensor = torch.empty((1,), dtype=torch.long, device=self.device)
-        dist.recv(length_tensor, src=src)
+        if os.getenv("ENABLE_GLOO", "false").lower() == "true":
+            length_tensor_cpu = torch.empty((1,), dtype=torch.long, device='cpu')
+            dist.recv(length_tensor_cpu, src=src)
+            length_tensor.copy_(length_tensor_cpu)
+        else:
+            dist.recv(length_tensor, src=src)
 
         num_bytes = int(length_tensor.cpu().item())
 
@@ -561,7 +620,12 @@ class OptimizerParamSchedulerTransfer:
             return None
 
         payload_tensor = torch.empty((num_bytes,), dtype=torch.uint8, device=self.device)
-        dist.recv(payload_tensor, src=src)
+        if os.getenv("ENABLE_GLOO", "false").lower() == "true":
+            payload_tensor_cpu = payload_tensor.to('cpu')
+            dist.recv(payload_tensor_cpu, src=src)
+            payload_tensor.copy_(payload_tensor_cpu)
+        else:
+            dist.recv(payload_tensor, src=src)
 
         payload = payload_tensor.cpu().numpy().tobytes()
 
