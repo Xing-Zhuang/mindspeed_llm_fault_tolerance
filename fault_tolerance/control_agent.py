@@ -132,7 +132,61 @@ class ControlAgent:
             #设置recovery_state为completed
             self.redis_client.set(f"recovery_state", "completed")
 
-      
+    def recovery_v2(self, error_info: dict):
+        self.redis_client.set(f"recovery_state", "start")
+        situation = self.judge_situation(error_info)
+
+        if situation == Situation.FB or situation == Situation.UPDATE:
+            print(f"=============Situation: {situation}================")
+            #找到error的rank
+            error_rank_id = self._find_error_rank(error_info)
+            self.redis_client.set(f"error_rank_id", error_rank_id)
+            assert(error_rank_id is not None)
+
+
+            #设置helper
+            helper_ranks = [2,3,6,7]
+            helper_worker_ranks = [2]
+            data_receiver_ranks = [[2,3]]
+            mbs = 4
+            help_batch_size = mbs
+            self.redis_client.set(f"helper_ranks", json.dumps(helper_ranks))
+            self.redis_client.set(f"data_receiver_ranks", json.dumps(data_receiver_ranks))
+            self.redis_client.set(f"help_batch_size", help_batch_size)
+            self.redis_client.set(f"data_sender_rank", 0)
+            self.redis_client.set(f"helper_worker_ranks", json.dumps(helper_worker_ranks))
+
+            
+            #选择冗余rank和重启的npu
+            redundant_rank_id = 2
+            relaunch_node_id = 0
+            relaunch_npu_id = 1
+            self.redis_client.set(f"redundant_rank_id", redundant_rank_id)
+            self.redis_client.set(f"relaunch_node_id", relaunch_node_id)
+            self.redis_client.set(f"relaunch_npu_id", relaunch_npu_id)
+            self.redis_client.set(f"relaunch_args", self.redis_client.get(f"{error_rank_id}:launch_config"))
+
+            
+            
+            #等待发送完成
+            while True:
+                if self.redis_client.exists(f"train_state_send"):
+                    train_state_send = self.redis_client.get(f"train_state_send")
+                    if train_state_send == "completed":
+                        break          
+
+            #清理redis
+            #self.redis_client.delete(f"error_rank_id")
+            self.redis_client.delete(f"redundant_rank_id")
+            self.redis_client.delete(f"relaunch_node_id")
+            self.redis_client.delete(f"relaunch_npu_id")
+            self.redis_client.delete(f"relaunch_args")
+            self.redis_client.delete(f"train_state_send")
+            for rank in range(self.train_worker_num):
+                self.redis_client.delete(f"{rank}:error")
+
+            #设置recovery_state为completed
+            self.redis_client.set(f"recovery_state", "completed")
         
     def judge_situation(self, error_info: dict) -> Situation:
         phases = set()
@@ -183,7 +237,7 @@ class ControlAgent:
         while True:
             error_info = self.monitor_until_error(interval=3)
             start_time = time.time()
-            self.recovery(error_info)
+            self.recovery_v2(error_info)
             print(f"本轮容错结束，耗时: {time.time() - start_time} seconds")
             
      

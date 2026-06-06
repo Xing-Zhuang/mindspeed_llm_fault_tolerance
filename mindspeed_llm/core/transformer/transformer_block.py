@@ -268,6 +268,9 @@ def transformer_block_forward(
         # See set_input_tensor()
         hidden_states = self.input_tensor
 
+    # import os
+    # print(f"rank:{os.environ['RANK']} hidden_states.shape:{hidden_states.shape}")
+
     # Viewless tensor.
     # - We only need to create a viewless tensor in the case of micro batch
     #   size (mbs) == 1, since in this case, 'hidden_states.transpose()'

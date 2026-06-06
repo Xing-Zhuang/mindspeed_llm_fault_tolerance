@@ -8,7 +8,7 @@
 #export TORCH_DIST_INIT_BARRIER=1
 export GLOO_SOCKET_IFNAME=v.100
 #export TORCH_DISTRIBUTED_DEBUG=DETAIL 开启这个环境变量会创建gloo通信组的喔
-#export ASCEND_LAUNCH_BLOCKING=1
+export ASCEND_LAUNCH_BLOCKING=1
 #export CUDA_VISIBLE_DEVICES=0,2,4,7
 #export ASCEND_RT_VISIBLE_DEVICES=0,2,4,7
 
@@ -41,13 +41,14 @@ WORLD_SIZE=$(($NPUS_PER_NODE*$NNODES))
 
 # please fill these path configurations
 CKPT_LOAD_DIR="/home/user2/workplace/model_weight/model_mcore/Qwen3-4B-tp2-pp2"
-CKPT_SAVE_DIR="./ckpt/qwen3-4B"
+CKPT_SAVE_DIR="/home/user2/workplace/model_weight/checkpoint"
+
 DATA_PATH="./finetune_dataset/alpaca"
 TOKENIZER_PATH="/home/user2/workplace/model_weight/model_from_hf/Qwen3-4B"
 
 TP=2
 PP=2
-MBS=1
+MBS=4
 GBS=16
 #global batch size = micro batch size × gradient accumulation steps × data parallel workers
 
@@ -70,7 +71,6 @@ GPT_ARGS="
     --pipeline-model-parallel-size ${PP} \
     --num-layers 36 \
     --hidden-size 2560 \
-    --sequence-parallel \
     --use-flash-attn \
     --use-rotary-position-embeddings \
     --num-attention-heads 32 \
@@ -111,6 +111,9 @@ GPT_ARGS="
     --bf16 \
     --ckpt-format torch
 "
+#--sequence-parallel
+
+
 
 DATA_ARGS="
     --data-path $DATA_PATH \

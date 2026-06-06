@@ -26,7 +26,7 @@ class TrainAgent:
         except Exception as e:
             print(f"Error connecting to Redis: {e}")
 
-    def _start_process_from_config(self, config, npu_id):
+    def _start_process_from_config(self, config, npu_id, is_proxy=False):
         args = config["args"]
 
         env = config.get("env") or {}
@@ -36,7 +36,20 @@ class TrainAgent:
         }
         env["RESTART"] = "true"
         env["RESTART_NPU_ID"] = str(npu_id)
-
+        env["HELPER_RANKS"] = self.redis_client.get("helper_ranks")
+        env["HELP_BATCH_SIZE"] = self.redis_client.get("help_batch_size")
+        env["DATA_RECEIVER_RANKS"] = self.redis_client.get("data_receiver_ranks")
+        env["DATA_SENDER_RANK"] = self.redis_client.get("data_sender_rank")
+        env["HELPER_WORKER_RANKS"] = self.redis_client.get("helper_worker_ranks")
+        if is_proxy:
+            env["PROXY"] = "true"
+            
+        
+        error_rank = int(self.redis_client.get("error_rank_id"))
+        data_sender_rank = int(self.redis_client.get("data_sender_rank"))
+        if error_rank == data_sender_rank:
+            env["DATA_SENDER"] = "true"
+        
 
         kwargs = dict(config.get("kwargs") or {})
 
@@ -73,7 +86,7 @@ class TrainAgent:
                             break
                     relaunch_args = json.loads(self.redis_client.get("relaunch_args"))
                     relaunch_npu_id = self.redis_client.get("relaunch_npu_id")
-                    self._start_process_from_config(relaunch_args, relaunch_npu_id)
+                    self._start_process_from_config(relaunch_args, relaunch_npu_id, is_proxy=True)
 
                     #等待启动完成
                     while True:

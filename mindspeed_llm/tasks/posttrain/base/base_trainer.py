@@ -200,7 +200,6 @@ class BaseTrainer(ABC):
         raise NotImplementedError("Subclasses must implement this method.")
 
     def train(self):
-        #print('=============开始执行train()函数 mindspeed_llm/tasks/posttrain/base/base_trainer.py================',flush=True)
         args: Any | None = get_args()
         test_data_iterator = self.test_data_iterator_list[0]
 

@@ -346,11 +346,19 @@ class OptimizerTransfer:
                         f"expected idx={expected_idx}"
                     )
 
-                buf = torch.empty(
-                    tuple(x["shape"]),
-                    dtype=self._str_to_dtype(x["dtype"]),
-                    device=self.device,
-                )
+                
+                if os.getenv('PROXY','false') == 'true':
+                    buf = torch.empty(
+                        tuple(x["shape"]),
+                        dtype=self._str_to_dtype(x["dtype"]),
+                        device='cpu',
+                    )
+                else:
+                    buf = torch.empty(
+                        tuple(x["shape"]),
+                        dtype=self._str_to_dtype(x["dtype"]),
+                        device=self.device,
+                    )
 
                 recv_buffers.append(buf)
 

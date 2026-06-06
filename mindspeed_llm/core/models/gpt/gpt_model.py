@@ -33,7 +33,7 @@ from mindspeed.core.context_parallel.get_batch_utils import get_actual_seq_len
 from mindspeed.core.transformer.flash_attention.reset_attention_mask.adaptor import compute_qkv_index, get_position_ids
 from mindspeed_llm.core.models.common.chunk_loss import chunk_loss, calculate_lm_loss
 from mindspeed_llm.training.utils import recompute_valid_actual_seq_len
-
+import os
 
 class GPTModel(MegatronCoreGPTModel):
     """
@@ -127,6 +127,60 @@ class GPTModel(MegatronCoreGPTModel):
             pre_process=self.pre_process,
             post_process=self.post_process,
         )
+        #print(f"decoder:{self.decoder}")
+        '''
+        decoder:TransformerBlock(
+            (layers): ModuleList(
+                (0-17): 18 x TransformerLayer(
+                (input_layernorm): RMSNorm()
+                (self_attention): SelfAttention(
+                    (core_attention): CustomDotProductAttention(
+                    (scale_mask_softmax): FusedScaleMaskSoftmax()
+                    (attention_dropout): Dropout(p=0.0, inplace=False)
+                    )
+                    (linear_proj): RowParallelLinear(in_features=4096, out_features=2560, bias=False, TP=2)
+                    (linear_qkv): ColumnParallelLinear(in_features=2560, out_features=6144, bias=False, TP=2)
+                    (q_layernorm): RMSNorm()
+                    (k_layernorm): RMSNorm()
+                )
+                (pre_cross_attn_layernorm): IdentityOp()
+                (cross_attention): IdentityOp()
+                (cross_attn_bda): IdentityFuncOp()
+                (pre_mlp_layernorm): RMSNorm()
+                (mlp): MLP(
+                    (linear_fc1): ColumnParallelLinear(in_features=2560, out_features=19456, bias=False, TP=2)
+                    (linear_fc2): RowParallelLinear(in_features=9728, out_features=2560, bias=False, TP=2)
+                )
+                (attn_mhc): IdentityOp()
+                (mlp_mhc): IdentityOp()
+                )
+            )
+            (final_layernorm): RMSNorm()
+            )
+
+        '''
+        
+        # import inspect
+        # import sys
+
+        # attn = self.decoder.layers[0].self_attention
+        # cls = type(attn)
+
+        # print("rank:", os.environ.get("RANK"), flush=True)
+        # print("object:", attn, flush=True)
+        # print("class:", cls, flush=True)
+        # print("module:", cls.__module__, flush=True)
+        # print("class file:", inspect.getsourcefile(cls), flush=True)
+        # print("class line:", inspect.getsourcelines(cls)[1], flush=True)
+
+        # print("init func:", cls.__init__, flush=True)
+        # print("init file:", inspect.getsourcefile(cls.__init__), flush=True)
+        # print("init line:", inspect.getsourcelines(cls.__init__)[1], flush=True)
+        # print("forward file:", inspect.getsourcefile(cls.forward), flush=True)
+        # print("forward line:", inspect.getsourcelines(cls.forward)[1], flush=True)
+
+        # print("loaded module file:", sys.modules[cls.__module__].__file__, flush=True)
+
 
         if self.mtp_process:
             self.mtp = MultiTokenPredictionBlock(config=self.config, spec=self.mtp_block_spec)
@@ -236,6 +290,10 @@ class GPTModel(MegatronCoreGPTModel):
 
 
         # Run decoder.
+        # import inspect
+        # print("=============")
+        # print(inspect.getsourcefile(self.decoder.forward))
+
         hidden_states = self.decoder(
             hidden_states=decoder_input,
             attention_mask=attention_mask,

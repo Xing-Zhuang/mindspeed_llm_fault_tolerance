@@ -90,6 +90,7 @@ def self_attention_init(
         attention_type="self",
         cp_comm_type=cp_comm_type,
         )
+        #print("创建attention模块")
       
         if not args.use_g2_attention:
             if not args.no_enable_linear_qkv:

@@ -352,6 +352,11 @@ def save_checkpoint_wrapper(fn):
                 else:
                     # Regular torch.save.
                     torch.save(state_dict, checkpoint_name)
+                    # if os.environ['RANK']=='0':
+                    #     print(f"rank:{os.environ['RANK']} 执行 torch.save",flush=True)
+                    #     torch.save(state_dict, checkpoint_name)
+                    #     print(f"rank:{os.environ['RANK']} 执行完毕 torch.save",flush=True)
+                    #     time.sleep(1000)
 
         start_misc = time.time()
         if not args.async_save:

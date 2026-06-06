@@ -1,3 +1,4 @@
+from base64 import decode
 from cmath import phase
 from enum import Enum
 from pickle import TRUE
@@ -52,7 +53,7 @@ class StateManager:
         try:
             self.interval = interval
             self.id = os.environ['RANK'] #global rank as ID
-            self.redis_client = redis.from_url(redis_url)
+            self.redis_client = redis.from_url(redis_url,decode_responses=True)
             self.redis_client.ping()
             print(f"RANK {os.environ['RANK']}: StateManager Connected to Redis",flush=True)
             self.set_phase(phase=Phase.INIT)
@@ -193,6 +194,94 @@ class StateManager:
         RERUN = True       
         return None, None, None, None, None, None, None, model
 
+    def recovery_v2(self,model,optimizer,opt_param_scheduler,recovery_iteration):
+        os.environ["FAKE_RESTART"] = "true"
+        
+        #0.梯度清零
+        for model_chunk in model:
+            model_chunk.zero_grad_buffer()
+        optimizer.zero_grad() 
+
+        
+        #1.重建通信组
+        initialize_megatron()
+
+        #2. 重新wrap model (wrap模型时重新让wrap_model持有最新的通信组)  并更新优化器的grad_stats_parallel_group
+        model = self.rewrap_model(model[0].module)
+        for i, opt in enumerate(optimizer.chained_optimizers):
+            setattr(opt, "grad_stats_parallel_group", parallel_state.get_model_parallel_group())
+    
+
+        #3.pre_process和post_process 同步embeddind
+        gpt_model = model[0].module.module
+        if gpt_model.pre_process or gpt_model.post_process:
+            if parallel_state.is_rank_in_embedding_group():
+                weight = gpt_model.shared_embedding_or_output_weight()
+                if os.getenv("ENABLE_GLOO", "false").lower() == "true":
+                    weight_data_cpu = weight.data.to('cpu')
+                    torch.distributed.all_reduce(
+                        weight_data_cpu, group=parallel_state.get_embedding_group()
+                    )
+                    weight.data = weight_data_cpu.to('cuda')
+                else:
+                    weight.data = weight.data.cuda()
+                    torch.distributed.all_reduce(
+                        weight.data, group=parallel_state.get_embedding_group()
+                    )
+        
+        #4.发送训练状态
+        dst_rank = self.get_dst_rank()
+        if dst_rank is not None:
+            self.send_training_state(
+                model = model,
+                optimizer = optimizer, 
+                opt_param_scheduler = opt_param_scheduler,
+                iteration=recovery_iteration,
+                dst_rank=dst_rank,
+            )
+
+        from megatron.core import parallel_state as ps
+        while True:
+            if self.redis_client.get("helper_worker_ranks") and self.redis_client.exists("helper_ranks") and self.redis_client.exists("data_receiver_ranks") and self.redis_client.exists("help_batch_size") and self.redis_client.exists("data_sender_rank"):
+                          
+                # tp_group = ps.get_tensor_model_parallel_group()
+                # pp_group = ps.get_pipeline_model_parallel_group()
+                # dp_group = ps.get_data_parallel_group()
+                # tp_global_ranks = dist.get_process_group_ranks(tp_group)
+                # pp_global_ranks = dist.get_process_group_ranks(pp_group)
+                # dp_global_ranks = dist.get_process_group_ranks(dp_group)
+                # print(f"RANK:{os.environ['RANK']} 并行组：tp_global_ranks：{tp_global_ranks}， pp_global_ranks：{pp_global_ranks},dp_global_ranks:{dp_global_ranks}")
+                rank_id = int(os.environ['RANK'])
+
+                if rank_id in json.loads(self.redis_client.get("helper_ranks")):
+                    os.environ['HELPER'] = "true"
+                
+                if rank_id in json.loads(self.redis_client.get("helper_worker_ranks")):
+                    os.environ['HELPER_WORKER'] = "true"
+                
+                if rank_id == int(self.redis_client.get("data_sender_rank")):
+                    os.environ['DATA_SENDER'] = 'true'
+
+                data_receiver_ranks:list[list[int]] = json.loads(self.redis_client.get("data_receiver_ranks"))
+                if any(rank_id in ranks for ranks in data_receiver_ranks):
+                    os.environ['DATA_RECEIVER'] = 'true'
+                
+
+                os.environ['HELP_BATCH_SIZE'] = self.redis_client.get("help_batch_size")
+                os.environ['ERROR_RANK_ID'] = self.redis_client.get("error_rank_id")
+                os.environ['PROXY_RANK'] = self.redis_client.get("error_rank_id")
+                os.environ['DATA_SENDER_RANK'] = self.redis_client.get("data_sender_rank")
+                os.environ['DATA_RECEIVER_RANKS'] = self.redis_client.get("data_receiver_ranks")
+                os.environ['HELPER_WORKER_RANKS'] = self.redis_client.get("helper_worker_ranks")
+                
+                
+                break
+        
+        #5.结束本次迭代，重新开始
+        global RERUN
+        RERUN = True       
+        return None, None, None, None, None, None, None, model
+
     def report_error(
         self,
         error:Exception
@@ -208,7 +297,7 @@ class StateManager:
         while True:
             key = f"instruction:train_worker:{self.id}:{instr_id}"
             if self.redis_client.exists(key):
-                instr = json.loads(self.redis_client.get(key).decode('utf-8'))
+                instr = json.loads(self.redis_client.get(key))
                 if instr is not None:
                     instr_id += 1
                     yield instr
@@ -224,17 +313,17 @@ class StateManager:
         src_rank: int,
     ) :
         #1.接收model weight
-        model_weight_transfer = ModelWeightTransfer(model=model,include_buffers=True)
-        model_weight_transfer.recv(src=src_rank)
+        # model_weight_transfer = ModelWeightTransfer(model=model,include_buffers=True)
+        # model_weight_transfer.recv(src=src_rank)
      
 
         #2.接收optimizer state
-        optimizer_transfer = OptimizerTransfer(optimizer)
-        optimizer_transfer.recv(src=src_rank)
+        # optimizer_transfer = OptimizerTransfer(optimizer)
+        # optimizer_transfer.recv(src=src_rank)
 
         #3.接收opt_param_scheduler
-        scheduler_transfer = OptimizerParamSchedulerTransfer(opt_param_scheduler)
-        scheduler_transfer.recv(src=src_rank)
+        # scheduler_transfer = OptimizerParamSchedulerTransfer(opt_param_scheduler)
+        # scheduler_transfer.recv(src=src_rank)
 
         #4.接收iteration和num_floating_point_operations_so_far
         recv_list = [None, None]
@@ -259,16 +348,16 @@ class StateManager:
         dst_rank: int,
     ) -> None:
         #1.发送model weight
-        model_weight_transfer = ModelWeightTransfer(model=model,include_buffers=True)
-        model_weight_transfer.send(dst=dst_rank)
+        # model_weight_transfer = ModelWeightTransfer(model=model,include_buffers=True)
+        # model_weight_transfer.send(dst=dst_rank)
         
         #2.发送optimizer state
-        optimizer_transfer = OptimizerTransfer(optimizer)
-        optimizer_transfer.send(dst=dst_rank)
+        # optimizer_transfer = OptimizerTransfer(optimizer)
+        # optimizer_transfer.send(dst=dst_rank)
 
         #3.发送opt_param_scheduler
-        scheduler_transfer = OptimizerParamSchedulerTransfer(opt_param_scheduler)
-        scheduler_transfer.send(dst=dst_rank)
+        # scheduler_transfer = OptimizerParamSchedulerTransfer(opt_param_scheduler)
+        # scheduler_transfer.send(dst=dst_rank)
 
         #4.发送iteration和num_floating_point_operations_so_far
         num_floating_point_operations_so_far = 0

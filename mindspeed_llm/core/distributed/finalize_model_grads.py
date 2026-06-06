@@ -116,6 +116,7 @@ def _allreduce_word_embedding_grads(model: List[torch.nn.Module], config: Transf
             if os.getenv("ENABLE_GLOO", "false").lower() == "true":
                 device = grad.device
                 grad_cpu = grad.to("cpu")
+                #print(f"12 12 12 rank:{os.environ['RANK']}，torch.distributed.all_reduce, grad_cpu.shape:{grad_cpu.shape}")
                 torch.distributed.all_reduce(grad_cpu, group=parallel_state.get_embedding_group())
                 grad.copy_(grad_cpu.to(device))
             else:

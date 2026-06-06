@@ -882,6 +882,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
                 
         if args.save and args.save_interval and \
                 iteration % args.save_interval == 0:
+            
             save_checkpoint_and_time(iteration, model, optimizer,
                                      opt_param_scheduler,
                                      num_floating_point_operations_so_far,
